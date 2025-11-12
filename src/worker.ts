@@ -65,11 +65,14 @@ type InAppPurchaseItem = {
   price: InAppItemPrice | null;
 };
 
+type CurrencySource = "text" | "symbol" | "fallback" | null;
+
 type InAppItemPrice = {
   text: string;
   amount: number | null;
   currency: string | null;
   symbol: string | null;
+  currencySource?: CurrencySource;
   converted?: ConvertedPrice | null;
 };
 
@@ -152,6 +155,7 @@ export default {
       toRegion,
       fxCache,
       softwarePayload?.price?.currency ?? null,
+      enrichedPrice?.converted ?? null,
     );
 
     const responseBody = {
@@ -305,7 +309,7 @@ function parseInAppPurchases(payload: string | null): InAppPurchases | null {
     return null;
   }
 
-  const section = findSectionByTitle(data, "In-App Purchases");
+  const section = findSectionWithTextPairs(data);
   if (!section) return null;
 
   const items =
@@ -320,12 +324,12 @@ function parseInAppPurchases(payload: string | null): InAppPurchases | null {
   };
 }
 
-function findSectionByTitle(value: unknown, title: string): InAppSection | null {
+function findSectionWithTextPairs(value: unknown): InAppSection | null {
   if (!value) return null;
 
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const found = findSectionByTitle(entry, title);
+      const found = findSectionWithTextPairs(entry);
       if (found) return found;
     }
     return null;
@@ -333,12 +337,22 @@ function findSectionByTitle(value: unknown, title: string): InAppSection | null 
 
   if (typeof value === "object") {
     const typed = value as Record<string, unknown>;
-    if (typeof typed.title === "string" && typed.title === title) {
+    const items = typed.items;
+    if (
+      Array.isArray(items) &&
+      items.some(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          Array.isArray((item as { textPairs?: unknown }).textPairs) &&
+          ((item as { textPairs?: unknown[] }).textPairs?.length ?? 0) > 0,
+      )
+    ) {
       return typed as InAppSection;
     }
 
     for (const child of Object.values(typed)) {
-      const found = findSectionByTitle(child, title);
+      const found = findSectionWithTextPairs(child);
       if (found) return found;
     }
   }
@@ -359,11 +373,11 @@ function createIapItem(name: string | undefined, price: string | undefined): InA
 function parseItemPrice(text: string): InAppItemPrice {
   const trimmed = text.trim();
   if (!trimmed) {
-    return { text, amount: null, currency: null, symbol: null };
+    return { text, amount: null, currency: null, symbol: null, currencySource: null };
   }
 
   const amount = parseNumericAmount(trimmed);
-  const currency = detectCurrencyCode(trimmed);
+  const { code: currency, source: currencySource } = detectCurrencyCode(trimmed);
   const symbol = detectCurrencySymbol(trimmed, currency);
 
   return {
@@ -371,6 +385,7 @@ function parseItemPrice(text: string): InAppItemPrice {
     amount,
     currency,
     symbol,
+    currencySource,
   };
 }
 
@@ -417,6 +432,7 @@ async function enrichInAppPurchases(
   toRegion: string | null,
   fxCache: FxCache,
   fallbackCurrency: string | null,
+  basePriceConversion: ConvertedPrice | null,
 ): Promise<InAppPurchases | null> {
   if (!iap) return null;
 
@@ -434,27 +450,47 @@ async function enrichInAppPurchases(
         return { ...item, price };
       }
 
-      const converted = await convertCurrency(
-        price.amount,
-        price.currency,
-        targetMeta.currency,
-        fxCache,
-      );
+      const canReuseBaseConversion =
+        !!basePriceConversion &&
+        price.currency.toUpperCase() === basePriceConversion.sourceCurrency.toUpperCase() &&
+        basePriceConversion.currency === targetMeta.currency;
 
-      if (!converted) return { ...item, price };
+      let convertedAmount: number | null = null;
+      let rate: number;
+      let fetchedAt: string;
+
+      if (canReuseBaseConversion) {
+        rate = basePriceConversion.rate;
+        fetchedAt = basePriceConversion.fetchedAt;
+        convertedAmount =
+          price.amount !== null ? price.amount * basePriceConversion.rate : null;
+      } else {
+        const converted = await convertCurrency(
+          price.amount,
+          price.currency,
+          targetMeta.currency,
+          fxCache,
+        );
+
+        if (!converted) return { ...item, price };
+
+        rate = converted.rate;
+        fetchedAt = converted.fetchedAt;
+        convertedAmount = converted.amount;
+      }
 
       return {
         ...item,
         price: {
           ...price,
           converted: {
-            amount: converted.amount !== null ? roundTo(converted.amount) : null,
+            amount: convertedAmount !== null ? roundTo(convertedAmount) : null,
             currency: targetMeta.currency,
             symbol: targetMeta.symbol,
-            rate: converted.rate,
+            rate,
             sourceCurrency: price.currency,
             targetRegion: toRegion,
-            fetchedAt: converted.fetchedAt,
+            fetchedAt,
           },
         },
       };
@@ -466,13 +502,17 @@ async function enrichInAppPurchases(
 
 function normalizeItemCurrency(price: InAppItemPrice | null, fallbackCurrency: string | null) {
   if (!price) return null;
-  if (price.currency) return price;
   if (!fallbackCurrency) return price;
+
+  const shouldFallback = !price.currency || (price.currencySource ?? null) !== "text";
+  if (!shouldFallback) return price;
+
   const code = fallbackCurrency.toUpperCase();
   return {
     ...price,
     currency: code,
     symbol: price.symbol ?? CURRENCY_SYMBOL_MAP[code] ?? null,
+    currencySource: "fallback",
   };
 }
 
@@ -543,25 +583,29 @@ async function getFxData(base: string, cache: FxCache) {
   return entry;
 }
 
-function detectCurrencyCode(text: string) {
+function detectCurrencyCode(text: string): { code: string | null; source: CurrencySource } {
   const upper = text.toUpperCase();
 
   const codeMatch = upper.match(/\b([A-Z]{3})\b/);
   if (codeMatch && CURRENCY_CODES.includes(codeMatch[1])) {
-    return codeMatch[1];
+    return { code: codeMatch[1], source: "text" };
   }
 
   for (const code of CURRENCY_CODES) {
-    if (upper.includes(code)) return code;
+    if (upper.includes(code)) return { code, source: "text" };
   }
 
   for (const symbol of SYMBOL_LOOKUP) {
     if (symbol && text.includes(symbol)) {
-      return SYMBOL_TO_CURRENCY[symbol];
+      const mapped = SYMBOL_TO_CURRENCY[symbol] ?? null;
+      return {
+        code: mapped,
+        source: mapped ? "symbol" : null,
+      };
     }
   }
 
-  return null;
+  return { code: null, source: null };
 }
 
 function detectCurrencySymbol(text: string, currency: string | null) {
