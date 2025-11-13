@@ -79,6 +79,16 @@ type HistoryEntry = {
   target: string;
 };
 
+type BestPick = {
+  app: AppDefinition;
+  region: string;
+  regionInfo: RegionOption;
+  itemName: string;
+  convertedLabel: string;
+  originalLabel: string | null;
+  amount: number;
+};
+
 const WORKER_BASE_URL =
   (import.meta.env.VITE_WORKER_URL as string | undefined) ??
   'https://app-store-worker.minai012374.workers.dev';
@@ -643,15 +653,17 @@ function renderResults(records: ComparisonRecord[]) {
     return;
   }
 
-  const grouped = groupBy(records.filter((record) => state.selectedAppIds.has(record.app.id)), (record) =>
-    record.app.id,
-  );
+  const selectedRecords = records.filter((record) => state.selectedAppIds.has(record.app.id));
+  const grouped = groupBy(selectedRecords, (record) => record.app.id);
+  const bestPicks = collectBestPicks(selectedRecords);
 
   const sections = Array.from(grouped.entries()).map(([appId, rows]) =>
     renderResultSection(appId, rows),
   );
 
-  elements.results.innerHTML = sections.join('');
+  const bestSection = bestPicks.length ? renderBestPicksSection(bestPicks) : '';
+
+  elements.results.innerHTML = bestSection + sections.join('');
 }
 
 function renderResultSection(appId: string, rows: ComparisonRecord[]) {
@@ -731,6 +743,100 @@ function renderResultSection(appId: string, rows: ComparisonRecord[]) {
           : ''
       }
     </section>
+  `;
+}
+
+function collectBestPicks(records: ComparisonRecord[]): BestPick[] {
+  const grouped = groupBy(
+    records.filter((record) => !!record.payload),
+    (record) => record.app.id,
+  );
+  const picks: BestPick[] = [];
+
+  for (const rows of grouped.values()) {
+    let bestMatch: { row: ComparisonRecord; item: InAppItem; amount: number } | null = null;
+    for (const row of rows) {
+      const items = row.payload?.inAppPurchases?.items ?? [];
+      for (const item of items) {
+        const amount = item.price?.converted?.amount;
+        if (typeof amount !== 'number') continue;
+        if (!bestMatch || amount < bestMatch.amount) {
+          bestMatch = { row, item, amount };
+        }
+      }
+    }
+
+    if (bestMatch) {
+      const regionInfo =
+        REGION_INDEX.get(bestMatch.row.region) ??
+        ({ code: bestMatch.row.region, label: bestMatch.row.region, flag: '🌐' } as RegionOption);
+      const converted = bestMatch.item.price?.converted;
+      if (!converted || typeof converted.amount !== 'number') continue;
+      const convertedLabel = formatCurrency(converted.amount, converted.currency, converted.symbol);
+      if (convertedLabel === '—') continue;
+      const originalFormatted = bestMatch.item.price
+        ? formatCurrency(
+            bestMatch.item.price.amount ?? null,
+            bestMatch.item.price.currency ?? undefined,
+            bestMatch.item.price.symbol ?? undefined,
+          )
+        : bestMatch.item.priceText ?? null;
+      const originalLabel =
+        originalFormatted && originalFormatted !== '—' ? originalFormatted : bestMatch.item.priceText ?? null;
+      picks.push({
+        app: bestMatch.row.app,
+        region: bestMatch.row.region,
+        regionInfo,
+        itemName: bestMatch.item.name,
+        convertedLabel,
+        originalLabel: originalLabel && originalLabel !== '—' ? originalLabel : null,
+        amount: converted.amount,
+      });
+    }
+  }
+
+  return picks.sort((a, b) => a.amount - b.amount);
+}
+
+function renderBestPicksSection(bestPicks: BestPick[]) {
+  if (!bestPicks.length) return '';
+  const MAX_BEST_PICKS = 3;
+  const topPicks = bestPicks.slice(0, MAX_BEST_PICKS);
+  const cards = topPicks.map(renderBestPickCard).join('');
+  return `
+    <section class="best-picks">
+      <header>
+        <p class="eyebrow">Best Value</p>
+        <h3>最具性价比地区</h3>
+      </header>
+      <div class="best-pick-grid">
+        ${cards}
+      </div>
+    </section>
+  `;
+}
+
+function renderBestPickCard(pick: BestPick) {
+  return `
+    <article class="best-pick-card">
+      <div class="best-pick-region">
+        <span class="flag">${pick.regionInfo.flag}</span>
+        <div>
+          <p>${escapeHtml(pick.regionInfo.label)}</p>
+          <span>${pick.region.toUpperCase()}</span>
+        </div>
+      </div>
+      <p class="best-pick-app">${escapeHtml(pick.app.name)}</p>
+      <p class="best-pick-item">${escapeHtml(pick.itemName)}</p>
+      <div class="best-pick-prices">
+        <span class="best-pick-price">${escapeHtml(pick.convertedLabel)}</span>
+        ${
+          pick.originalLabel
+            ? `<span class="best-pick-original">${escapeHtml(pick.originalLabel)}</span>`
+            : ''
+        }
+      </div>
+    </article>
   `;
 }
 
