@@ -552,6 +552,11 @@ th {
   align-items: center;
 }
 
+.history-rerun {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+}
+
 .mini-chip {
   padding: 0.2rem 0.7rem;
   border-radius: 999px;

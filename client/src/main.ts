@@ -73,6 +73,7 @@ type ComparisonRecord = {
 
 type HistoryEntry = {
   timestamp: number;
+  appIds: string[];
   apps: string[];
   regions: string[];
   target: string;
@@ -348,6 +349,14 @@ elements.regionSearchInput?.addEventListener('input', (event) => {
   renderRegionDrawer();
 });
 
+elements.historyList?.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-history-index]');
+  if (!button) return;
+  const index = Number(button.dataset.historyIndex);
+  if (Number.isNaN(index)) return;
+  rerunHistoryEntry(index);
+});
+
 function renderAppList() {
   if (!elements.appDrawerList) return;
   if (state.apps.length === 0) {
@@ -584,7 +593,7 @@ async function runComparison() {
   state.latestRecords = records;
   setSummary(`已完成 · ${records.filter((r) => r.payload).length} 成功`);
   renderResults(records);
-  pushHistory(selectedApps.map((app) => app.name), regions, state.targetRegion);
+  pushHistory(selectedApps, regions, state.targetRegion);
 }
 
 async function fetchComparisonRecord(
@@ -832,15 +841,58 @@ function setSummary(message: string) {
   }
 }
 
-function pushHistory(appNames: string[], regions: string[], target: string) {
+function pushHistory(apps: AppDefinition[], regions: string[], target: string) {
+  const appIds = apps.map((app) => app.id);
+  const appNames = apps.map((app) => app.name);
   state.history.unshift({
     timestamp: Date.now(),
+    appIds,
     apps: appNames,
     regions,
     target,
   });
   state.history = state.history.slice(0, 8);
   renderHistory();
+}
+
+function rerunHistoryEntry(index: number) {
+  const entry = state.history[index];
+  if (!entry) return;
+
+  const availableAppIds = new Set(state.apps.map((app) => app.id));
+  let nextAppIds = entry.appIds.filter((id) => availableAppIds.has(id));
+  if (!nextAppIds.length) {
+    nextAppIds = state.apps.filter((app) => entry.apps.includes(app.name)).map((app) => app.id);
+  }
+  if (!nextAppIds.length) {
+    setSummary('历史记录中的 App 已不可用');
+    return;
+  }
+
+  const normalizedRegions = entry.regions
+    .map((region) => region.toLowerCase())
+    .filter((code) => REGION_INDEX.has(code));
+  if (!normalizedRegions.length) {
+    setSummary('历史记录中的地区已不可用');
+    return;
+  }
+
+  state.selectedAppIds = new Set(nextAppIds);
+  state.selectedRegions = new Set(normalizedRegions);
+
+  const normalizedTarget = entry.target.toLowerCase();
+  if (REGION_INDEX.has(normalizedTarget)) {
+    state.targetRegion = normalizedTarget;
+    if (elements.targetRegionSelect) {
+      elements.targetRegionSelect.value = normalizedTarget;
+    }
+  }
+
+  renderAppList();
+  renderRegionDrawer();
+  renderSelectionSummaries();
+  setSummary('正在根据历史记录重新查询…');
+  void runComparison();
 }
 
 function renderHistory() {
@@ -850,7 +902,7 @@ function renderHistory() {
     return;
   }
   elements.historyList.innerHTML = state.history
-    .map((entry) => {
+    .map((entry, index) => {
       const time = new Date(entry.timestamp).toLocaleString();
       const apps = entry.apps.join(', ');
       const regionBadges = entry.regions
@@ -865,6 +917,9 @@ function renderHistory() {
           <div class="history-meta">
             <span class="mini-chip target">目标 ${entry.target.toUpperCase()}</span>
             ${regionBadges}
+            <button class="btn ghost history-rerun" data-history-index="${index}">
+              重新查询
+            </button>
           </div>
         </li>
       `;
