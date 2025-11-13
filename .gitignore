@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.home/.npm/_update-notifier-last-checked
+.home/Library/Preferences/.wrangler/metrics.json
+.tmp-build/regions.js
+.tmp-build/shared/regions.js
+.tmp-build/src/region-data.js
+.tmp-build/src/worker.js
+.tmp-build/worker.js
+codex.patch

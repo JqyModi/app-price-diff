@@ -599,7 +599,8 @@ async function fetchComparisonRecord(
       },
     });
     if (!response.ok) {
-      throw new Error(`Worker error ${response.status}`);
+      const message = response.status === 404 ? '该地区未上架该 App' : `Worker error ${response.status}`;
+      throw new Error(message);
     }
     const payload = (await response.json()) as WorkerResponse;
     return { app, region, payload };
