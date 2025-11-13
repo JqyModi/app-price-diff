@@ -124,6 +124,8 @@ const filters = {
   region: '',
 };
 
+const HISTORY_STORAGE_KEY = 'app-price-diff-history';
+
 const state: {
   apps: AppDefinition[];
   selectedAppIds: Set<string>;
@@ -326,6 +328,7 @@ setupDrawer(elements.regionDrawer, elements.openRegionDrawerButton, elements.clo
 renderAppList();
 renderRegionDrawer();
 renderSelectionSummaries();
+hydrateHistoryFromStorage();
 renderHistory();
 setSummary('待查询');
 elements.targetRegionSelect!.value = state.targetRegion;
@@ -346,7 +349,9 @@ elements.targetRegionSelect?.addEventListener('change', (event) => {
 
 elements.clearHistoryButton?.addEventListener('click', () => {
   state.history = [];
+  persistHistory();
   renderHistory();
+  setSummary('历史记录已清空');
 });
 
 elements.appSearchInput?.addEventListener('input', (event) => {
@@ -958,7 +963,33 @@ function pushHistory(apps: AppDefinition[], regions: string[], target: string) {
     target,
   });
   state.history = state.history.slice(0, 8);
+  persistHistory();
   renderHistory();
+}
+
+function hydrateHistoryFromStorage() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    const normalized = parsed.filter((entry) =>
+      entry && typeof entry === 'object' && typeof entry.timestamp === 'number'
+    );
+    state.history = normalized.slice(0, 8) as HistoryEntry[];
+  } catch {
+    // ignore
+  }
+}
+
+function persistHistory() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(state.history.slice(0, 8)));
+  } catch {
+    // ignore
+  }
 }
 
 function rerunHistoryEntry(index: number) {
