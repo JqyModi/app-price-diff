@@ -650,36 +650,21 @@ function renderResultSection(appId: string, rows: ComparisonRecord[]) {
   if (!app) return '';
 
   const successes = rows.filter((row) => row.payload);
-  const minValue = Math.min(
-    ...successes
-      .map((row) => row.payload?.price?.converted?.amount)
-      .filter((value): value is number => typeof value === 'number'),
-  );
-  const hasValidMinimum = Number.isFinite(minValue);
+  const allIapAmounts = successes
+    .flatMap((row) => row.payload?.inAppPurchases?.items ?? [])
+    .map((item) => item.price?.converted?.amount)
+    .filter((value): value is number => typeof value === 'number');
+  const globalBestIapAmount = allIapAmounts.length ? Math.min(...allIapAmounts) : null;
 
   const tableRows = successes
     .map((row) => {
       const regionInfo =
         REGION_INDEX.get(row.region) ?? ({ code: row.region, label: row.region, flag: '🌐' } as RegionOption);
       const payload = row.payload!;
-      const priceLabel = formatPrice(payload.price);
-      const convertedLabel = formatConvertedPrice(payload.price);
-      const convertedAmount = payload.price?.converted?.amount ?? null;
-      const delta =
-        hasValidMinimum && convertedAmount !== null
-          ? convertedAmount - (minValue as number)
-          : null;
-      const deltaLabel =
-        delta === null
-          ? '—'
-          : delta === 0
-            ? '最低'
-            : `${delta > 0 ? '+' : ''}${delta.toFixed(2)} ${payload.price?.converted?.currency ?? ''}`;
-      const best = delta === 0;
-      const iapLabel = formatIapSummary(payload.inAppPurchases);
+      const iapLabel = formatIapSummary(payload.inAppPurchases, globalBestIapAmount);
 
       return `
-        <tr class="${best ? 'best-row' : ''}">
+        <tr>
           <td>
             <div class="cell-region">
               <span class="flag">${regionInfo.flag}</span>
@@ -689,9 +674,6 @@ function renderResultSection(appId: string, rows: ComparisonRecord[]) {
               </div>
             </div>
           </td>
-          <td>${priceLabel}</td>
-          <td>${convertedLabel}</td>
-          <td>${escapeHtml(deltaLabel)}</td>
           <td>${iapLabel}</td>
         </tr>
       `;
@@ -725,9 +707,6 @@ function renderResultSection(appId: string, rows: ComparisonRecord[]) {
                 <thead>
                   <tr>
                     <th>地区</th>
-                    <th>原始价格</th>
-                    <th>换算价格</th>
-                    <th>差值</th>
                     <th>内购概览</th>
                   </tr>
                 </thead>
@@ -746,41 +725,54 @@ function renderResultSection(appId: string, rows: ComparisonRecord[]) {
   `;
 }
 
-function formatPrice(price: PriceInfo | null | undefined) {
-  if (!price) return '—';
-  if (price.amount === null) return price.category === 'free' ? '免费' : '—';
-  return escapeHtml(formatCurrency(price.amount, price.currency, price.converted?.symbol));
-}
-
-function formatConvertedPrice(price: PriceInfo | null | undefined) {
-  if (!price?.converted) {
-    return '—';
+function formatIapSummary(iap: InAppPurchases | null | undefined, bestAmount: number | null) {
+  if (!iap || !iap.items.length) {
+    return `<div class="iap-chip-group"><span class="iap-chip muted">未获取内购数据</span></div>`;
   }
-  const amountLabel = formatCurrency(
-    price.converted.amount ?? null,
-    price.converted.currency,
-    price.converted.symbol,
-  );
-  const rate = price.converted.rate.toFixed(4);
-  return `
-    <div class="converted">
-      <span>${escapeHtml(amountLabel)}</span>
-      <span class="rate">FX ${escapeHtml(rate)}</span>
-    </div>
-  `;
-}
 
-function formatIapSummary(iap: InAppPurchases | null | undefined) {
-  if (!iap || !iap.items.length) return '—';
-  const summary = iap.items.slice(0, 2).map((item) => {
-    const amount = item.price?.converted ?? item.price;
-    const label = amount
-      ? formatCurrency(amount.amount ?? null, amount.currency ?? undefined, amount.symbol ?? undefined)
-      : item.priceText;
-    return `<span class="iap-chip">${escapeHtml(item.name)} · ${escapeHtml(label)}</span>`;
-  });
-  const suffix = iap.items.length > 2 ? `<span class="iap-chip muted">+${iap.items.length - 2} 项</span>` : '';
-  return summary.join('') + suffix;
+  const MAX_ITEMS = 3;
+  const bestPredicate = (item: InAppItem) => {
+    const amount = item.price?.converted?.amount;
+    return typeof bestAmount === 'number' && typeof amount === 'number' && Math.abs(amount - bestAmount) < 0.001;
+  };
+
+  let displayItems = iap.items.slice(0, MAX_ITEMS);
+  const bestIndex = iap.items.findIndex(bestPredicate);
+  if (bestIndex >= MAX_ITEMS && bestIndex !== -1) {
+    displayItems = [...iap.items.slice(0, MAX_ITEMS - 1), iap.items[bestIndex]];
+  }
+
+  const chips = displayItems
+    .map((item) => {
+      const converted = item.price?.converted ?? null;
+      const convertedAmount =
+        converted && typeof converted.amount === 'number'
+          ? formatCurrency(converted.amount, converted.currency, converted.symbol)
+          : null;
+      const originalFormatted = item.price
+        ? formatCurrency(item.price.amount ?? null, item.price.currency ?? undefined, item.price.symbol ?? undefined)
+        : item.priceText ?? '—';
+      const originalLabel =
+        originalFormatted === '—' && item.priceText ? item.priceText : originalFormatted ?? '—';
+      const convertedLabel = convertedAmount ?? '—';
+      const convertedText = convertedLabel !== '—' ? escapeHtml(convertedLabel) : null;
+      const originalText = originalLabel !== '—' ? escapeHtml(originalLabel) : null;
+      const meta = [convertedText, originalText].filter(Boolean).join(' / ');
+      const isBest = bestPredicate(item);
+      const compactClass = meta ? '' : ' compact';
+      return `
+        <span class="iap-chip${isBest ? ' best' : ''}${compactClass}">
+          <span class="iap-chip-name">${escapeHtml(item.name)}</span>
+          ${meta ? `<span class="iap-chip-meta">${meta}</span>` : ''}
+        </span>
+      `;
+    })
+    .join('');
+
+  const extraCount = iap.items.length - displayItems.length;
+  const extraChip = extraCount > 0 ? `<span class="iap-chip muted compact">+${extraCount} 项</span>` : '';
+
+  return `<div class="iap-chip-group">${chips}${extraChip}</div>`;
 }
 
 function formatCurrency(amount: number | null, currency?: string | null, fallbackSymbol?: string | null) {
