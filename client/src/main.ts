@@ -196,11 +196,33 @@ const PRESET_APPS: AppDefinition[] = [
   },
 ];
 
-const RECOMMENDED_COMBOS = [
-  { label: 'AI 聊天', apps: 'ChatGPT · Claude · Perplexity' },
-  { label: '出海社交', apps: 'Grok · Poe · Manus AI' },
-  { label: '影音娱乐', apps: 'Netflix · Disney+ · YouTube Premium' },
-  { label: '效率办公', apps: 'Notion · Spotify · ChatGPT' },
+type RecommendedCombo = {
+  label: string;
+  apps: string;
+  appIds: string[];
+};
+
+const RECOMMENDED_COMBOS: RecommendedCombo[] = [
+  {
+    label: 'AI 聊天',
+    apps: 'ChatGPT · Claude · Perplexity',
+    appIds: ['chatgpt', 'claude', 'perplexity'],
+  },
+  {
+    label: '出海社交',
+    apps: 'Grok · Poe · Manus AI',
+    appIds: ['grok', 'poe', 'manus-ai'],
+  },
+  {
+    label: '影音娱乐',
+    apps: 'Netflix · Disney+ · YouTube Premium',
+    appIds: ['netflix', 'disney-plus', 'youtube-premium'],
+  },
+  {
+    label: '效率办公',
+    apps: 'Notion · Spotify · ChatGPT',
+    appIds: ['notion', 'spotify', 'chatgpt'],
+  },
 ];
 
 const SUGGESTED_APP_QUERIES = ['Spotify', 'YouTube Premium', 'Claude', 'Netflix', 'Notion'];
@@ -329,10 +351,22 @@ const template = `
         <section class="drawer-tip">
           <div class="drawer-tip-title">推荐组合</div>
           <ul class="drawer-tip-list">
-            ${RECOMMENDED_COMBOS.map(
-              (combo) =>
-                `<li><strong>${escapeHtml(combo.label)}</strong><span>${escapeHtml(combo.apps)}</span></li>`,
-            ).join('')}
+            ${RECOMMENDED_COMBOS.map((combo) => {
+              const ids = combo.appIds.join(',');
+              return `
+                <li>
+                  <button
+                    type="button"
+                    class="combo-suggestion"
+                    data-app-ids="${escapeHtml(ids)}"
+                    data-label="${escapeHtml(combo.label)}"
+                  >
+                    <strong>${escapeHtml(combo.label)}</strong>
+                    <span>${escapeHtml(combo.apps)}</span>
+                  </button>
+                </li>
+              `;
+            }).join('')}
           </ul>
           <p class="drawer-tip-desc">按组合对比常见订阅套餐，快速找到最优购入地区。</p>
         </section>
@@ -425,6 +459,7 @@ const elements = {
   historyList: document.querySelector<HTMLUListElement>('#historyList'),
   customAppForm: document.querySelector<HTMLFormElement>('#customAppForm'),
   formMessage: document.querySelector<HTMLSpanElement>('#formMessage'),
+  recommendedComboList: document.querySelector<HTMLUListElement>('.drawer-tip-list'),
 };
 
 if (!elements.appDrawerList || !elements.regionDrawerGroups || !elements.results || !elements.summary) {
@@ -481,6 +516,17 @@ elements.historyList?.addEventListener('click', (event) => {
   const index = Number(button.dataset.historyIndex);
   if (Number.isNaN(index)) return;
   rerunHistoryEntry(index);
+});
+
+elements.recommendedComboList?.addEventListener('click', (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-app-ids]');
+  if (!target) return;
+  const ids = (target.dataset.appIds ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (!ids.length) return;
+  applyRecommendedCombo(ids, target.dataset.label ?? '推荐组合');
 });
 
 function renderAppList() {
@@ -651,6 +697,15 @@ function renderPreviewChips(
   const remaining = values.length - 3;
   container.innerHTML =
     remaining > 0 ? `${preview}<span class="mini-chip muted">+${remaining}</span>` : preview;
+}
+
+function applyRecommendedCombo(appIds: string[], label: string) {
+  const validIds = appIds.filter((id) => state.apps.some((app) => app.id === id));
+  if (!validIds.length) return;
+  state.selectedAppIds = new Set(validIds);
+  renderAppList();
+  renderSelectionSummaries();
+  setSummary(`已应用「${label}」组合`);
 }
 
 function setupDrawer(
