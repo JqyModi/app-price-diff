@@ -56,6 +56,7 @@ type AppDefinition = {
   slug?: string;
   defaultRegion?: string;
   url?: string;
+  icon?: string;
 };
 
 type RegionOption = {
@@ -101,8 +102,108 @@ const PRESET_APPS: AppDefinition[] = [
     slug: 'chatgpt',
     defaultRegion: 'us',
     url: 'https://apps.apple.com/us/app/chatgpt/id6448311069',
+    icon: 'https://logo.clearbit.com/openai.com',
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    appId: '6473438037',
+    slug: 'claude',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/claude/id6473438037',
+    icon: 'https://logo.clearbit.com/anthropic.com',
+  },
+  {
+    id: 'grok',
+    name: 'Grok',
+    appId: '6476806238',
+    slug: 'grok',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/grok/id6476806238',
+    icon: 'https://logo.clearbit.com/x.ai',
+  },
+  {
+    id: 'perplexity',
+    name: 'Perplexity',
+    appId: '6445903063',
+    slug: 'perplexity',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/perplexity-ai/id6445903063',
+    icon: 'https://logo.clearbit.com/perplexity.ai',
+  },
+  {
+    id: 'manus-ai',
+    name: 'Manus AI',
+    appId: '1669003926',
+    slug: 'manus-ai',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/manus-ai-keyboard/id1669003926',
+    icon: 'https://logo.clearbit.com/manus.ai',
+  },
+  {
+    id: 'poe',
+    name: 'Poe',
+    appId: '1640745955',
+    slug: 'poe',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/poe-fast-ai-chat/id1640745955',
+    icon: 'https://logo.clearbit.com/poe.com',
+  },
+  {
+    id: 'notion',
+    name: 'Notion',
+    appId: '1232780281',
+    slug: 'notion',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/notion-notes-tasks-wikis/id1232780281',
+    icon: 'https://logo.clearbit.com/notion.so',
+  },
+  {
+    id: 'netflix',
+    name: 'Netflix',
+    appId: '363590051',
+    slug: 'netflix',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/netflix/id363590051',
+    icon: 'https://logo.clearbit.com/netflix.com',
+  },
+  {
+    id: 'spotify',
+    name: 'Spotify',
+    appId: '324684580',
+    slug: 'spotify',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580',
+    icon: 'https://logo.clearbit.com/spotify.com',
+  },
+  {
+    id: 'disney-plus',
+    name: 'Disney+',
+    appId: '1446075923',
+    slug: 'disney-plus',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/disney/id1446075923',
+    icon: 'https://logo.clearbit.com/disneyplus.com',
+  },
+  {
+    id: 'youtube-premium',
+    name: 'YouTube Premium',
+    appId: '544007664',
+    slug: 'youtube-premium',
+    defaultRegion: 'us',
+    url: 'https://apps.apple.com/us/app/youtube-watch-listen-stream/id544007664',
+    icon: 'https://logo.clearbit.com/youtube.com',
   },
 ];
+
+const RECOMMENDED_COMBOS = [
+  { label: 'AI 聊天', apps: 'ChatGPT · Claude · Perplexity' },
+  { label: '出海社交', apps: 'Grok · Poe · Manus AI' },
+  { label: '影音娱乐', apps: 'Netflix · Disney+ · YouTube Premium' },
+  { label: '效率办公', apps: 'Notion · Spotify · ChatGPT' },
+];
+
+const SUGGESTED_APP_QUERIES = ['Spotify', 'YouTube Premium', 'Claude', 'Netflix', 'Notion'];
 
 const regionNames =
   typeof Intl.DisplayNames === 'function'
@@ -225,6 +326,16 @@ const template = `
         <div class="drawer-controls">
           <input type="search" id="appSearchInput" placeholder="搜索 App 名称或 ID" />
         </div>
+        <section class="drawer-tip">
+          <div class="drawer-tip-title">推荐组合</div>
+          <ul class="drawer-tip-list">
+            ${RECOMMENDED_COMBOS.map(
+              (combo) =>
+                `<li><strong>${escapeHtml(combo.label)}</strong><span>${escapeHtml(combo.apps)}</span></li>`,
+            ).join('')}
+          </ul>
+          <p class="drawer-tip-desc">按组合对比常见订阅套餐，快速找到最优购入地区。</p>
+        </section>
         <div class="drawer-grid apps" id="appDrawerList"></div>
         <form id="customAppForm" class="custom-app">
           <h3>添加自定义 App</h3>
@@ -375,7 +486,8 @@ elements.historyList?.addEventListener('click', (event) => {
 function renderAppList() {
   if (!elements.appDrawerList) return;
   if (state.apps.length === 0) {
-    elements.appDrawerList.innerHTML = `<p class="drawer-empty">尚未添加 App</p>`;
+    elements.appDrawerList.innerHTML = getAppEmptyStateMarkup('尚未添加 App', true);
+    wireSearchSuggestionHandlers(elements.appDrawerList);
     return;
   }
 
@@ -387,7 +499,8 @@ function renderAppList() {
   });
 
   if (!apps.length) {
-    elements.appDrawerList.innerHTML = `<p class="drawer-empty">未找到匹配的 App</p>`;
+    elements.appDrawerList.innerHTML = getAppEmptyStateMarkup('未找到匹配的 App');
+    wireSearchSuggestionHandlers(elements.appDrawerList);
     return;
   }
 
@@ -401,11 +514,17 @@ function renderAppList() {
         app.appId ? `ID ${app.appId}` : '通过链接',
         regionLabel,
       ];
+      const iconMarkup = app.icon
+        ? `<span class="app-card-icon"><img src="${escapeHtml(app.icon)}" alt="" loading="lazy" /></span>`
+        : `<span class="app-card-icon placeholder">${escapeHtml(
+            app.name.charAt(0).toUpperCase() || '?',
+          )}</span>`;
       return `
         <label class="app-card">
           <input type="checkbox" value="${escapeHtml(app.id)}" ${checked} />
           <div class="app-card-body">
-            <div>
+            ${iconMarkup}
+            <div class="app-card-info">
               <p class="app-name">${escapeHtml(app.name)}</p>
               <p class="app-meta">${subtitleParts.map(escapeHtml).join(' · ')}</p>
             </div>
@@ -1062,6 +1181,45 @@ function renderHistory() {
       `;
     })
     .join('');
+}
+
+function getAppSearchHint() {
+  if (!SUGGESTED_APP_QUERIES.length) return 'Spotify';
+  const index = (filters.app.length + state.apps.length) % SUGGESTED_APP_QUERIES.length;
+  return SUGGESTED_APP_QUERIES[index];
+}
+
+function getAppEmptyStateMarkup(message: string, encourageCustom = false) {
+  const hint = getAppSearchHint();
+  const hintButton = `<button type="button" class="link-button" data-suggestion="${escapeHtml(hint)}">${escapeHtml(
+    hint,
+  )}</button>`;
+  const suffixText = encourageCustom
+    ? '或使用下方表单添加自定义 App。'
+    : '或直接勾选上方推荐组合。';
+  const suffix = suffixText ? `，${escapeHtml(suffixText)}` : '';
+  return `
+    <div class="drawer-empty">
+      <p>${escapeHtml(message)}</p>
+      <p class="drawer-empty-hint">试试搜索 ${hintButton}${suffix}</p>
+    </div>
+  `;
+}
+
+function wireSearchSuggestionHandlers(container: HTMLElement) {
+  container
+    .querySelectorAll<HTMLButtonElement>('button[data-suggestion]')
+    .forEach((button) => {
+      button.addEventListener('click', () => {
+        const keyword = button.dataset.suggestion ?? '';
+        if (!keyword) return;
+        if (elements.appSearchInput) {
+          elements.appSearchInput.value = keyword;
+        }
+        filters.app = keyword;
+        renderAppList();
+      });
+    });
 }
 
 function regionGroupKey(label: string) {
