@@ -138,7 +138,7 @@ const PRESET_APPS: AppDefinition[] = [
     slug: 'manus-ai',
     defaultRegion: 'us',
     url: 'https://apps.apple.com/us/app/manus-ai-keyboard/id1669003926',
-    icon: 'https://logo.clearbit.com/manus.ai',
+    icon: 'https://manus.im/favicon.ico',
   },
   {
     id: 'poe',
