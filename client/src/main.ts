@@ -767,17 +767,13 @@ async function runComparison() {
   setSummary('查询中…');
   elements.results!.innerHTML = `<div class="placeholder">正在获取价格数据…</div>`;
 
-  const records: ComparisonRecord[] = [];
-  for (const app of selectedApps) {
-    for (const region of regions) {
-      // eslint-disable-next-line no-await-in-loop
-      const record = await fetchComparisonRecord(app, region, state.targetRegion).finally(() => {
-        completed += 1;
-        setSummary(`查询中 ${completed}/${totalJobs}`);
-      });
-      records.push(record);
-    }
-  }
+  const jobs = selectedApps.flatMap((app) => regions.map((region) => ({ app, region })));
+  const records = await asyncPool(jobs, 4, async ({ app, region }) => {
+    const record = await fetchComparisonRecord(app, region, state.targetRegion);
+    completed += 1;
+    setSummary(`查询中 ${completed}/${totalJobs}`);
+    return record;
+  });
 
   state.latestRecords = records;
   setSummary(`已完成 · ${records.filter((r) => r.payload).length} 成功`);
@@ -785,27 +781,90 @@ async function runComparison() {
   pushHistory(selectedApps, regions, state.targetRegion);
 }
 
+class FetchError extends Error {
+  retryable: boolean;
+
+  constructor(message: string, retryable = false) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function fetchComparisonRecord(
   app: AppDefinition,
   region: string,
   targetRegion: string,
 ): Promise<ComparisonRecord> {
-  try {
-    const response = await fetch(buildWorkerUrl(app, region, targetRegion), {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      const message = response.status === 404 ? '该地区未上架该 App' : `Worker error ${response.status}`;
-      throw new Error(message);
+  const maxRetries = 3;
+  const baseDelay = 500;
+  const url = buildWorkerUrl(app, region, targetRegion);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new FetchError('该地区未上架该 App');
+        }
+        const retryable = response.status === 429 || response.status >= 500;
+        if (retryable && attempt < maxRetries) {
+          throw new FetchError(`Worker error ${response.status}`, true);
+        }
+        throw new FetchError(`Worker error ${response.status}`);
+      }
+      const payload = (await response.json()) as WorkerResponse;
+      return { app, region, payload };
+    } catch (error) {
+      const retryableError =
+        error instanceof FetchError ? error.retryable : error instanceof TypeError || error instanceof DOMException;
+      if (retryableError && attempt < maxRetries) {
+        await wait(baseDelay * 2 ** attempt);
+        continue;
+      }
+      const message = error instanceof Error ? error.message : '未知错误';
+      return { app, region, error: message };
     }
-    const payload = (await response.json()) as WorkerResponse;
-    return { app, region, payload };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    return { app, region, error: message };
   }
+  return { app, region, error: '未知错误' };
+}
+
+async function asyncPool<T, R>(
+  items: T[],
+  limit: number,
+  iteratorFn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (limit <= 0) throw new Error('Concurrency limit must be greater than 0');
+  const ret: R[] = new Array(items.length);
+  const executing = new Set<Promise<void>>();
+
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    const p = Promise.resolve()
+      .then(() => iteratorFn(item, i))
+      .then((result) => {
+        ret[i] = result;
+      })
+      .finally(() => {
+        executing.delete(p);
+      }) as Promise<void>;
+    executing.add(p);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+
+  await Promise.all(executing);
+  return ret;
 }
 
 function buildWorkerUrl(app: AppDefinition, region: string, targetRegion: string) {
